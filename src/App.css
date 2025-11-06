@@ -1,0 +1,17 @@
+.layout-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh; /* full screen height */
+}
+
+.layout-content {
+  flex: 1; /* pushes footer to bottom when content is short */
+  padding: 24px; /* or as needed */
+}
+
+.layout-footer {
+  background: #f5f5f5;
+  text-align: center;
+  padding: 30px 10px;
+  border-top: 1px solid #eaeaea;
+}
