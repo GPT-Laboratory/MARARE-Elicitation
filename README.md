@@ -119,3 +119,6 @@ Each team generates MVP and Vision drafts based on conversation context.
 At the end of the meeting, a Synthesizer Agent merges the outputs.
 
 The End Meeting Page displays all team results and calculated metrics.
+Watch a video
+
+[![Watch the video](https://i.ytimg.com/vi/T7NF3okvtNM/maxresdefault.jpg)](https://youtu.be/T7NF3okvtNM)
