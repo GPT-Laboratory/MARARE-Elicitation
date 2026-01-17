@@ -2,14 +2,13 @@ import React, { useState, useRef, useEffect } from "react";
 // import { io } from "socket.io-client";
 
 import "../../public/mixkit-long-pop-2358.mp3";
-import { useToggleHook } from "./useToggleHook.jsx";
 
 import VideoPlayer from "./VideoPlayer";
 import RoomChat from "./RoomChat";
 import BottomBar from "./BottomBar";
 import Header from "./Header";
 import { useRefs } from "./RefProvider";
-import { redirect, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
   setActivateAgent,
@@ -18,14 +17,15 @@ import {
   setIsAdmin,
   setAgent,
   setAgentName,
-  setEnableCaptions
+  setEnableCaptions,
+  setAgentReady
 } from "./features/mainStates/MainStates_Slice";
 import { getSocket } from "./socketInstance.jsx";
-import { initializeAzureSTT, processRemoteStream, sendTranscriptsToBackend, stopAllSTTRecognizers } from "./Helper/Helper.jsx";
+import { initializeAzureSTT, processRemoteStream, stopAllSTTRecognizers } from "./Helper/Helper.jsx";
 import FullPageLoader from "./FullPageLoader.jsx";
 import MeetingAction from "./MeetingAction.jsx";
 import "./stylingCSS/Content.css";
-import { notification, Switch } from "antd";
+import { Switch } from "antd";
 import { UserOutlined } from "@ant-design/icons";
 import {
   FaVideo,
@@ -41,13 +41,14 @@ import Spinner from "./GradientRotatingSpinner.jsx";
 import { playNotificationSound } from "./Helper/notification.jsx";
 import { Shrink } from "lucide-react";
 import ConfigurationSideBar from "./ConfigurationSideBar.jsx";
-// import AddConnectorModal from "../../app2/components/AddConnectorModal.jsx";
+import AddConnectorModal from "../../app2/components/AddConnectorModal.jsx";
 import { setTeamAmvp, setTeamAvision, setTeamBmvp, setTeamBvision, setTeamCmvp, setTeamCvision, stopAutoSend } from "../../app2/features/ReportSlice.jsx";
 import { useSnackbar } from 'notistack'
+import UserNameRequest from "./Helper/UserNameRequest.jsx";
 
 
 const Content = ({ joined, setJoined }) => {
-  const { toggleState, setToggleState } = useToggleHook();
+  // const { toggleState, setToggleState } = useToggleHook();
   const roomId = useSelector((state) => state.MainStates_Slice.roomId);
   // console.log("roomId", roomId);
   const agent = useSelector((state) => state.MainStates_Slice.agent);
@@ -63,7 +64,7 @@ const Content = ({ joined, setJoined }) => {
   const { joinStatus, setJoinStatus, remotePeers, getNewTranscripts } = useRefs();
   const [jointrequest, setJointrequest] = useState(false);
   const { user } = useAuth();
-  const userName = user?.user_metadata.name || "Participant";
+  const userName = user?.user_metadata?.full_name || "User";
   const roomId1 = window.location.pathname.split("/")[2];
   // console.log("roomId1", roomId1);
   const [toggleBarState, setToggleBarState] = useState(false);
@@ -71,7 +72,7 @@ const Content = ({ joined, setJoined }) => {
   const [previewStream, setPreviewStream] = useState(null);
   const [isInitializingStream, setIsInitializingStream] = useState(false);
   const previewVideoRef = useRef(null);
-  const { enqueueSnackbar, closeSnackbar } = useSnackbar()
+  const { enqueueSnackbar } = useSnackbar()
 
 
   // const userId = useSelector((state) => state.MainStates_Slice.userId);
@@ -96,6 +97,10 @@ const Content = ({ joined, setJoined }) => {
   const activateAgent = useSelector(
     (state) => state.MainStates_Slice.activateAgent
   );
+
+  const agentReady = useSelector(
+    (state) => state.MainStates_Slice.agentReady
+  );
   const {
     localVideoRef,
     localStream,
@@ -112,7 +117,7 @@ const Content = ({ joined, setJoined }) => {
     setRemoteTranscript,
     setRemotetranscriptView,
     setLocaltranscriptView,
-    formattedTime, startTiming, stopTiming, isRunning,
+    formattedTime, startTiming, stopTiming,
   } = useRefs();
   const dispatch = useDispatch();
 
@@ -213,10 +218,7 @@ const Content = ({ joined, setJoined }) => {
   const [raisedUsers, setRaisedUsers] = useState([]);
   const { isRaised } = useRefs();
 
-  const azureConfig = {
-    key: import.meta.env.VITE_AZURE_KEY, // Load from Vite env
-    region: import.meta.env.VITE_AZURE_REGION, // Load from Vite env
-  };
+
   useEffect(() => {
     console.log("toogle state in content", toggleBarState);
   }, [toggleBarState]);
@@ -230,15 +232,15 @@ const Content = ({ joined, setJoined }) => {
 
 
   useEffect(() => {
-    if(!agent){
+    if (!agent) {
       socket.on("captions-status", (data) => {
-      dispatch(setEnableCaptions(data.enableCaptions));
-      // if (data.enableCaptions) {
-      //   giveSuccessNotification(data.message); // "Your voice is recording"
-      // } else {
-      //   giveSuccessNotification(data.message); // "Recording voice stopped"
-      // }
-    });
+        dispatch(setEnableCaptions(data.enableCaptions));
+        // if (data.enableCaptions) {
+        //   giveSuccessNotification(data.message); // "Your voice is recording"
+        // } else {
+        //   giveSuccessNotification(data.message); // "Recording voice stopped"
+        // }
+      });
     }
 
     socket.on('openai-agent-value', (data) => {
@@ -253,8 +255,15 @@ const Content = ({ joined, setJoined }) => {
 
     })
 
+    socket.on('openai-agent-ready', ({ ready }) => {
+      dispatch(setAgentReady(ready));
+    });
+
     return () => {
       socket.off("captions-status");
+      socket.off('openai-agent-ready');
+      socket.off('openai-agent-value');
+
     };
   }, [socket]);
 
@@ -271,7 +280,7 @@ const Content = ({ joined, setJoined }) => {
       alert("Please initialize your camera and microphone first.");
       return;
     }
-    const email = user?.email || user?.user_metadata.email || ''
+    // const email = user?.email || user?.user_metadata.email || ''
     setJointrequest(true);
 
     // Transfer the preview stream to main stream
@@ -406,6 +415,8 @@ const Content = ({ joined, setJoined }) => {
 
   useEffect(() => {
     socket.on("update_hands", (data) => {
+      console.log("handrise by ", data);
+
       setRaisedUsers(data.raisedUsers);
       const Raised = data.isRaised;
       if (Raised) {
@@ -435,7 +446,7 @@ const Content = ({ joined, setJoined }) => {
 
   const toggleCaptions = async () => {
     console.log("toggled");
-    
+
     const newCaptionsState = !enableCaptions;
 
     dispatch(setEnableCaptions(newCaptionsState));
@@ -1200,34 +1211,39 @@ const Content = ({ joined, setJoined }) => {
               className={`w-full bg-gray-800 h-screen overflow-visible  transition-all duration-300 ${enableChat && "flex justify-between"
                 } `}
             >
-              {activateAgent && agent && (
-                <div className="absolute top-0 right-0 bg-black bg-opacity-60 flex items-center justify-center z-[1000]">
-                  <div className="bg-white text-gray-800 p-4 rounded-2xl shadow-2xl w-full max-w-sm flex flex-col items-center animate-fade-in">
-                    <svg
-                      className="w-8 h-8 text-blue-600 animate-spin mb-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"
-                      ></path>
-                    </svg>
-                    <h2 className="text-lg font-semibold mb-1">
-                      Agent Activated Successfully...
-                    </h2>
+              {activateAgent && !agentReady && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-[1000]">
+                {/* // <div className="absolute top-0 right-0  bg-opacity-60 flex items-center justify-center z-[1000]" > */}
+                  <div className="bg-green-200 text-gray-800  p-5 rounded-2xl shadow-xl shadow-green-500 w-full max-w-sm flex flex-col items-center animate-fade-in">
+
+                    <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+
+                    <h2 className="text-lg font-semibold">Preparing AI Agent…</h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Initializing secure connection, please wait.
+                    </p>
                   </div>
                 </div>
               )}
+
+
+              {agentReady && (
+                // <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-[1000]">
+                <div className="absolute top-0 right-0   bg-opacity-60 flex items-center justify-center z-[1000]" >
+                  <div className="bg-green-200 text-gray-800 p-5 px-10 rounded-2xl shadow-xl shadow-green-500 w-full max-w-sm flex flex-col items-center animate-fade-in">
+
+                    <svg className="w-10 h-10 text-green-600 animate-pulse mb-3" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                    </svg>
+
+                    <h2 className="text-lg font-semibold"> Agent is Ready 🎙️</h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Start talking now.
+                    </p>
+                  </div>
+                </div>
+              )}
+
 
               <div
                 className={`flex w-full h-full  gap-4 transition-all duration-300 ${toggleBarState ? "blur-sm" : ""
@@ -1298,13 +1314,16 @@ const Content = ({ joined, setJoined }) => {
                 <div className="absolute top-0 left-1/2 transform z-[1000] -translate-x-1/2 bg-blue-700 bg-opacity-60 text-white px-2 py-2 rounded-lg max-w-xl w-11/12 text-center">
                   <p className="text-sm lg:text-base">
                     Meeting is in recording mode
-                   {agent && (
-                     <span>⏱ Time: {formattedTime}</span>
-                   )}
+                    {agent && (
+                      <span>⏱ Time: {formattedTime}</span>
+                    )}
                   </p>
                 </div>
               )}
-            
+              <AddConnectorModal
+                open={isPopupOpen}
+                onClose={() => setIsPopupOpen(false)}
+              />
 
               <FullPageLoader isLoading={isLoading} />
               {showMeetingPrompt && (
@@ -1320,6 +1339,10 @@ const Content = ({ joined, setJoined }) => {
                   roomId={roomId}
                   handlemessage={handlemessage}
                 />
+              )}
+
+              {userName == "User" && (
+                <UserNameRequest />
               )}
             </div>
           </>

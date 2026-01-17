@@ -251,10 +251,8 @@ def get_team_storage(meeting_id, team_key):
         return meeting_storage[team_key].copy()
     
 
-# def create_comprehensive_prompt(team_key, new_transcripts, existing_mvp, existing_vision, all_previous_transcripts):
 def create_comprehensive_prompt(team_key, new_transcripts, existing_mvp, existing_vision):
-
-    """Create prompt with memory context - Updated for bullet points and direct vision"""
+    """Create prompt with memory context and irrelevant content filtering"""
     
     # Ensure we have valid inputs
     if new_transcripts is None:
@@ -263,53 +261,70 @@ def create_comprehensive_prompt(team_key, new_transcripts, existing_mvp, existin
         existing_mvp = ""
     if existing_vision is None:
         existing_vision = ""
-    # if all_previous_transcripts is None:
-    #     all_previous_transcripts = [].
-    
-# Previous Meeting Context: {' '.join(all_previous_transcripts[-10:]) if all_previous_transcripts else 'First analysis'}
     
     # Combine all context
     context_section = ""
     if existing_mvp or existing_vision:
         context_section = f"""
-EXISTING CONTEXT FROM PREVIOUS DISCUSSIONS:
-Current MVP Elements: {existing_mvp if existing_mvp else 'None yet'}
-Current Vision Elements: {existing_vision if existing_vision else 'None yet'}
-"""
+    EXISTING CONTEXT FROM PREVIOUS DISCUSSIONS:
+    Current MVP Elements: {existing_mvp if existing_mvp else 'None yet'}
+    Current Vision Elements: {existing_vision if existing_vision else 'None yet'}
+    """
 
     new_content = '\n'.join(new_transcripts) if new_transcripts else 'No new content available'
     
-    prompt = f"""You are an expert product strategist analyzing a live meeting discussion. Your task is to provide analysis.
+    prompt = f"""You are an expert product strategist analyzing a live meeting discussion. Your task is to extract ONLY project-related, product-related, and business-related information.
 
-{context_section}
+    {context_section}
 
-NEW MEETING CONTENT TO ANALYZE:
-{new_content}
+    NEW MEETING CONTENT TO ANALYZE:
+    {new_content}
 
-INSTRUCTIONS:
-1. Analyze the new content in context of any existing MVP/Vision elements
-2. Generate responses for BOTH MVP and VISION sections - this is MANDATORY
-3. If this is the first analysis, create complete MVP and Vision from scratch
-4. If previous MVP/Vision exists, BUILD UPON and ENHANCE the existing content with new insights
+    CRITICAL FILTERING RULES - IGNORE THE FOLLOWING:
+    ❌ Personal conversations (greetings, small talk, casual chat)
+    ❌ Off-topic discussions (personal life, jokes)
+    ❌ Technical issues or meeting logistics (audio problems, connection issues)
+    ❌ Informal banter or social interactions
+    ❌ Any discussion NOT related to the project, product, business strategy, or work objectives
 
-CRITICAL REQUIREMENT: You MUST provide BOTH sections below. Do not skip either one.
+    ✅ ONLY EXTRACT AND ANALYZE:
+    ✅ Product features and functionality discussions
+    ✅ Technical requirements and specifications
+    ✅ Business goals and objectives
+    ✅ User needs and pain points
+    ✅ Project timeline and milestones
+    ✅ Strategic decisions and planning
+    ✅ Market analysis and competitive insights
+    ✅ Implementation approaches and architecture
+    ✅ Resource allocation and team planning
 
-REQUIRED OUTPUT FORMAT (MUST FOLLOW EXACTLY):
+    INSTRUCTIONS:
+    1. First, identify if the new content contains ANY project/product-related information
+    2. If the content is purely casual conversation, respond with "NO_RELEVANT_CONTENT"
+    3. If there IS relevant content, extract ONLY the project-related parts
+    4. Analyze the relevant content in context of any existing MVP/Vision elements
+    5. Generate responses for BOTH MVP and VISION sections based ONLY on relevant content
+    6. If this is the first analysis, create complete MVP and Vision from scratch
+    7. If previous MVP/Vision exists, BUILD UPON and ENHANCE ONLY with new project-related insights
 
-MVP:
-• [Functional requirement 1]
-• [Functional requirement 2] 
-• [Functional requirement 3]
+    REQUIRED OUTPUT FORMAT (MUST FOLLOW EXACTLY):
+
+    MVP:
+    - [Functional requirement 1 - ONLY if discussed in project context]
+    - [Functional requirement 2 - ONLY if discussed in project context]
+    - [Functional requirement 3 - ONLY if discussed in project context]
 
 
-VISION:
-[Provide a direct, to-the-point summary of what is discussed in the transcript - no fluff, just the key points and ideas mentioned]
+    VISION:
+    [Provide a direct, to-the-point summary of ONLY the project/product-related discussion - no fluff, just the key business points and technical ideas mentioned]
 
-IMPORTANT: 
-- MVP must be ONLY functional requirements in bullet points transcript content
-- VISION must be direct summary of transcript content, not generic vision statements"""
+    IMPORTANT: 
+    - If NO project-related content is found, return "NO_RELEVANT_CONTENT" instead of generating generic points
+    - MVP must be ONLY functional requirements in bullet points from PROJECT discussions
+    - VISION must be direct summary of PROJECT/PRODUCT content only, not casual conversation
+    - Do NOT make up features or requirements that weren't discussed
+    - Do NOT include casual conversation topics disguised as business requirements"""
 
-    # Ensure we return a valid string
     return prompt if prompt and prompt.strip() else "Analyze the meeting content and provide MVP functional requirements and vision summary."
 
 
@@ -339,16 +354,13 @@ def enhanced_team_executor(state, team_key, team_config, meeting_id):
         
         llm = get_cached_llm(agent_config['model'], agent_config['modelType'])
         
-        # Create comprehensive prompt with memory - with error checking
         prompt = create_comprehensive_prompt(
             team_key, 
             new_transcripts, 
             existing_mvp, 
             existing_vision,
-            # all_previous_transcripts
         )
         
-        # Ensure prompt is not None or empty
         if not prompt or not prompt.strip():
             prompt = f"Analyze meeting content for {team_key} and provide MVP functional requirements in bullet points and vision summary."
         
@@ -359,17 +371,24 @@ def enhanced_team_executor(state, team_key, team_config, meeting_id):
         response = llm.invoke(prompt)
         response_content = response.content if hasattr(response, 'content') else str(response)
         
-        if not response_content:
-            response_content = f"Default analysis for {team_key}: No specific content available for analysis."
+        # Check if content is irrelevant
+        if "NO_RELEVANT_CONTENT" in response_content or not response_content:
+            print(f"⏭️ {team_key}: No relevant project content found in this segment, keeping existing data")
+            # Keep existing data, don't update
+            state[f"{team_key}_mvp"] = existing_mvp or "• Waiting for project-related discussion..."
+            state[f"{team_key}_vision"] = existing_vision or "Waiting for project-related discussion..."
+            state[f"{team_key}_status"] = "no_new_content"
+            state[f"{team_key}_time"] = round(time.time() - start_time, 2)
+            return state
         
         # Parse response with memory integration
         parsed = parse_comprehensive_response(response_content, existing_mvp, existing_vision)
         
         # Ensure parsed results are not None
         if not parsed.get('mvp'):
-            parsed['mvp'] = existing_mvp or "• No functional requirements identified yet"
+            parsed['mvp'] = existing_mvp or "• Waiting for project-related discussion..."
         if not parsed.get('vision'):
-            parsed['vision'] = existing_vision or "No vision content available from transcript"
+            parsed['vision'] = existing_vision or "Waiting for project-related discussion..."
         
         # Special retry for Team A if Vision is still missing
         if team_key == "team_a" and (not parsed['vision'] or len(parsed['vision']) < 50):
@@ -377,17 +396,17 @@ def enhanced_team_executor(state, team_key, team_config, meeting_id):
             
             vision_prompt = f"""Based on this MVP content, create a comprehensive strategic vision:
 
-MVP CONTENT:
-{parsed['mvp']}
+        MVP CONTENT:
+        {parsed['mvp']}
 
-Generate ONLY a detailed VISION statement (minimum 100 words) that includes:
-- Long-term strategic goals
-- Market positioning objectives  
-- Technology evolution roadmap
-- Competitive advantages
-- Business impact projections
+        Generate ONLY a detailed VISION statement (minimum 100 words) that includes:
+        - Long-term strategic goals
+        - Market positioning objectives  
+        - Technology evolution roadmap
+        - Competitive advantages
+        - Business impact projections
 
-VISION:"""
+        VISION:"""
             
             try:
                 vision_response = llm.invoke(vision_prompt)
@@ -398,7 +417,7 @@ VISION:"""
             except Exception as ve:
                 print(f"⚠️ Vision retry failed: {ve}")
         
-       # Update storage with validated data - Updated with meeting_id
+        # Update storage with validated data
         update_team_storage(meeting_id, team_key, new_transcripts, parsed['mvp'], parsed['vision'])
         
         # Update state with final results
@@ -413,7 +432,6 @@ VISION:"""
         
     except Exception as e:
         print(f"❌ {team_key} failed: {str(e)}")
-        # Return existing data or defaults on failure - Updated with meeting_id
         team_data = get_team_storage(meeting_id, team_key)
         state[f"{team_key}_mvp"] = team_data.get("mvp", "") or "• Error processing functional requirements"
         state[f"{team_key}_vision"] = team_data.get("vision", "") or "Error processing vision content"

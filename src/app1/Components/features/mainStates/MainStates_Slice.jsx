@@ -28,6 +28,7 @@ const initialState = {
   currentConfiguration: {}, // Store the current config object
   isAdmin: false, // New state to track if the user is an admin
   enableCaptions: false, // New state to track if captions are enabled
+  agentReady: false,
   
 };
 
@@ -54,6 +55,10 @@ export const MainStates_Slice = createSlice({
     setActivateAgent: (state, action) => {
       state.activateAgent = action.payload; // Set the new Certificates array
       console.log("Updated activateAgent state:", state.activateAgent); // Log the updated state
+    },
+    setAgentReady: (state, action) => {
+      state.agentReady = action.payload; // Set the new Certificates array
+      console.log("Updated agentReady state:", state.agentReady); // Log the updated state
     },
     setVision: (state, action) => {
       state.vision = action.payload; // Set the new Certificates array
@@ -257,6 +262,7 @@ export const {
   setEphemeralKey,
   setIsAdmin,
   setEnableCaptions,
+  setAgentReady,
   
 } = MainStates_Slice.actions;
 

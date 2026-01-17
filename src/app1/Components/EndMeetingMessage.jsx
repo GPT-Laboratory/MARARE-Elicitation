@@ -273,59 +273,6 @@ const EndMeetingMessage = () => {
     message.success(`${team.name} approved successfully!`);
   };
 
-  // const handleCreateUserStories = async () => {
-  //   if (!isAnyTeamApproved) {
-  //     message.warning('Please approve a team first');
-  //     return;
-  //   }
-  //   // navigate(`/project/${id}`);
-
-  //   try {
-  //     setLoading(true);
-
-  //     // const response = await fetch("/api/generate-user-stories", {
-  //     const response = await fetch(`${socketURL}/generate-user-stories`, {
-  //       method: "POST",
-  //       headers: {
-  //         "Content-Type": "application/json",
-  //       },
-
-  //       body: JSON.stringify({
-  //         // objective: name,
-  //         // request_id: requestId,
-  //         project_id: id,
-  //         agenda: agenda,
-  //         vision: vision,
-  //         mvp: mvp,
-  //         meeting_transcript: allTranscripts,
-  //         model: '',
-  //         agents: '',
-  //         new_version: false,
-  //         selectedUserStory: 123,
-  //         user_id: userId,
-  //         meeting_duration: formattedTime,
-  //       }),
-  //     });
-  //     if (!response.ok) {
-  //       throw new Error("Response");
-  //     }
-      
-
-  //     setLoading(false);
-  //     // notification.success({
-  //     //   message: "User stories Generated",
-  //     // });
-  //     navigate(`/project/${id}`);
-  //   } catch (error) {
-  //     console.error("Error submitting data:", error);
-  //     setLoading(false);
-  //     notification.error({
-  //       message: "Internal Server Error",
-  //     });
-  //   }
-
-  // };
-
 
   const handleCreateUserStories = async () => {
   if (!isAnyTeamApproved) {
@@ -449,7 +396,7 @@ const EndMeetingMessage = () => {
                 overflowY: 'auto',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                textAlign: 'center'
+                textAlign: "left"
               }}
             />
             <Space size="small">
@@ -511,35 +458,6 @@ const EndMeetingMessage = () => {
     }}>
       {loading && <FullPageLoader />}
       <div style={{ margin: '0 auto' }}>
-        {/* Header Section */}
-        {/* <Card
-          style={{
-            marginBottom: '16px',
-            borderRadius: '12px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-            border: 'none'
-          }}
-          bodyStyle={{ padding: '20px' }}
-        >
-          <div style={{ textAlign: 'center' }}>
-            <CheckCircleFilled style={{
-              color: '#52c41a',
-              fontSize: '48px',
-              marginBottom: '12px'
-            }} />
-            <Title level={2} style={{
-              marginBottom: '4px',
-              fontSize: '24px'
-            }}>
-              Meeting Completed
-            </Title>
-            <Text style={{ fontSize: '14px', color: '#666' }}>
-              Review team proposals and select your preferred approach
-            </Text>
-          </div>
-        </Card> */}
-
-
 
         {/* Main Content */}
         <Row gutter={[16, 16]}>
@@ -861,7 +779,7 @@ const EndMeetingMessage = () => {
               </Card>
             </Col>
 
-            <Col xs={24} lg={24}>
+            {/* <Col xs={24} lg={24}>
               <Card
                 style={{
                   borderRadius: '12px',
@@ -873,7 +791,7 @@ const EndMeetingMessage = () => {
 
                 <ArtifactScorer />
               </Card>
-            </Col>
+            </Col> */}
           </Row>
 
 

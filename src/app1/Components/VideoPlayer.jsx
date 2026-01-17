@@ -108,7 +108,7 @@ const VideoPlayer = ({
   const [speakingAgents, setSpeakingAgents] = useState(new Set());
   const { user } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
- 
+
   const navigate = useNavigate();
   const enableAudio = useSelector(
     (state) => state.MainStates_Slice.enableAudio
@@ -116,12 +116,7 @@ const VideoPlayer = ({
   const enableVideo = useSelector(
     (state) => state.MainStates_Slice.enableVideo
   );
-  // const socket = useSelector((state) => state.MainStates_Slice.socket);
 
-  // console.log("enable video state ", enableVideo);
-  // useEffect(() => {
-  //   console.log("set the exisiting agent", existingAgents);
-  // }, [existingAgents, setExistingAgents]);
   const {
     localVideoRef,
     localStream,
@@ -150,6 +145,8 @@ const VideoPlayer = ({
   const screenvidRef = useRef(null);
   const peerConnections1 = useRef({});
   const screenStreamRef = useRef(null); // Add a ref to keep track of the screen stream for new users
+  // At the top of your component/file where you have other useRefs
+  const agentPeerConnectionRef = useRef(null);
   const [screenSharing, setScreenSharing] = useState(false);
   const [originalLocalStream, setOriginalLocalStream] = useState(null);
   const roomId = window.location.pathname.split("/")[2];
@@ -160,7 +157,7 @@ const VideoPlayer = ({
   // console.log("peerConnections", jointPeers);
   const socket = getSocket();
   const audioRef = useRef(null);
-  const userName = user?.user_metadata.name || "User";
+  const userName = user?.user_metadata?.full_name || "User";
 
   const { existingRemotePeers, setExistingRemotePeers } = useRefs();
 
@@ -168,7 +165,7 @@ const VideoPlayer = ({
     if (!SpeechRecognition.browserSupportsSpeechRecognition()) {
       alert("Your browser doesn't support speech recognition.");
     }
-    
+
   }, []);
 
 
@@ -202,7 +199,7 @@ const VideoPlayer = ({
     };
   }, []);
 
- 
+
   useEffect(() => {
     console.log("broadcasting transcripts:");
     const transcripts = {
@@ -434,12 +431,181 @@ const VideoPlayer = ({
         };
         setExistingRemotePeers(peer);
 
-      
+
       }
     );
 
+
+
+    socket.on("agent-offer", async ({ offer, fromUserId }) => {
+      console.log("🤖 Received agent offer from:", fromUserId);
+      console.log("Offer:", offer);
+
+      try {
+        // Close existing connection if any
+        if (agentPeerConnectionRef.current) {
+          try {
+            agentPeerConnectionRef.current.close();
+          } catch (e) {
+            console.warn("Error closing existing agent connection:", e);
+          }
+        }
+
+        const pc = new RTCPeerConnection(configuration);
+
+        // 🔥 STORE IT so you can add ICE candidates later
+        agentPeerConnectionRef.current = pc;
+
+        // 🔥 Enhanced connection state monitoring
+        pc.onconnectionstatechange = () => {
+          console.log("🔌 Agent connection state:", pc.connectionState);
+          
+          if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+            console.warn("⚠️ Agent connection lost, attempting to reconnect...");
+            // The agent will send a new offer if needed
+          } else if (pc.connectionState === "connected") {
+            console.log("✅ Agent connection established successfully");
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          console.log("🧊 Agent ICE connection state:", pc.iceConnectionState);
+          
+          if (pc.iceConnectionState === "failed") {
+            console.warn("⚠️ Agent ICE connection failed, attempting restart...");
+            try {
+              pc.restartIce();
+            } catch (e) {
+              console.error("Error restarting ICE:", e);
+            }
+          } else if (pc.iceConnectionState === "connected") {
+            console.log("✅ Agent ICE connection established");
+          }
+        };
+
+        // When agent audio comes
+        pc.ontrack = (event) => {
+          console.log("🎧 Received agent audio track");
+          const [stream] = event.streams;
+
+          // Create or get existing audio element
+          let audio = document.getElementById("agent-audio");
+          if (!audio) {
+            audio = new Audio();
+            audio.id = "agent-audio";
+            audio.autoplay = true;
+            audio.playsInline = true;
+            document.body.appendChild(audio);
+          }
+          
+          audio.srcObject = stream;
+          
+          // Ensure audio plays
+          audio.play().catch((err) => {
+            console.warn("Autoplay prevented, user interaction required:", err);
+          });
+
+          console.log("✅ Agent audio stream attached");
+        };
+
+        // Set remote description
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        console.log("✅ Set remote description for agent");
+
+        // Create answer
+        const answer = await pc.createAnswer({
+          offerToReceiveAudio: false,
+          offerToReceiveVideo: false,
+        });
+        await pc.setLocalDescription(answer);
+        console.log("✅ Created and set local answer for agent");
+
+        // Wait for ICE gathering to complete before sending answer
+        const waitForIce = () => {
+          return new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") {
+              resolve();
+              return;
+            }
+
+            const checkState = () => {
+              if (pc.iceGatheringState === "complete") {
+                pc.removeEventListener("icegatheringstatechange", checkState);
+                resolve();
+              }
+            };
+
+            pc.addEventListener("icegatheringstatechange", checkState);
+            setTimeout(() => {
+              pc.removeEventListener("icegatheringstatechange", checkState);
+              resolve();
+            }, 5000);
+          });
+        };
+
+        await waitForIce();
+        const completeAnswer = pc.localDescription;
+
+        // Send answer back to agent
+        socket.emit("peer-agent-answer", {
+          meetingId: id,
+          fromUserId: socket.id,
+          answer: completeAnswer,
+        });
+
+        console.log("📤 Sent complete answer to agent");
+
+        // Handle ICE candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit("peer-agent-ice", {
+              meetingId: id,
+              toUserId: fromUserId,
+              candidate: event.candidate,
+            });
+          } else {
+            console.log("✅ ICE gathering complete for agent peer");
+          }
+        };
+
+      } catch (error) {
+        console.error("❌ Error handling agent offer:", error);
+        // Clean up on error
+        if (agentPeerConnectionRef.current) {
+          try {
+            agentPeerConnectionRef.current.close();
+            agentPeerConnectionRef.current = null;
+          } catch (e) {
+            console.warn("Error cleaning up agent connection:", e);
+          }
+        }
+      }
+    });
+
+    // 🔥 NOW ADD THIS - Handle ICE candidates FROM agent
+    socket.on("agent-ice-candidate", async ({ candidate }) => {
+      console.log("🧊 Received ICE candidate from agent");
+
+      if (agentPeerConnectionRef.current && candidate) {
+        try {
+          await agentPeerConnectionRef.current.addIceCandidate(
+            new RTCIceCandidate(candidate)
+          );
+          console.log("✅ Added agent ICE candidate");
+        } catch (error) {
+          console.error("❌ Error adding ICE candidate:", error);
+        }
+      } else {
+        console.warn("⚠️ No peer connection available for agent ICE candidate");
+      }
+    });
+
+
+
+
+
     socket.on("welcome-audio", (data) => handleWelcomeAudio(data, audioRef));
-    
+
     socket.on("existing-peers", (peers) => {
       console.log("Existing peers inside", peers);
 
@@ -544,7 +710,7 @@ const VideoPlayer = ({
         videoEnabled,
         micEnabled,
       }) => {
-        
+
 
         const objPC = jointPeers.current.find((peer) => peer.userId === from);
         console.log("IN answer", objPC);
@@ -645,7 +811,7 @@ const VideoPlayer = ({
           } else {
             console.log("No agent element found for userId:", userId);
           }
-          
+
           enqueueSnackbar(`User ${pc.remoteName} has left the room`, {
             variant: "info",
             anchorOrigin: { vertical: "top", horizontal: "left" },
@@ -714,6 +880,7 @@ const VideoPlayer = ({
       socket.off("user-left");
       socket.off("video-toggle");
       socket.off("screen-sharer-disconnected");
+      socket.off("agent-offer");
     };
   }, []);
 
@@ -945,7 +1112,7 @@ const VideoPlayer = ({
     return obj.pc;
   };
 
-  
+
 
   const createOffer = async (
     userId,
@@ -1012,7 +1179,7 @@ const VideoPlayer = ({
     }
   };
 
- 
+
 
   // console.log("jointPeers", jointPeers);
   if (meetingEnded) {
@@ -1451,9 +1618,9 @@ const VideoPlayer = ({
   }, []);
 
   const debugLocalVideo = () => {
-    
+
     if (localVideoRef.current && localStream.current) {
-  
+
       if (localVideoRef.current.srcObject !== localStream.current) {
         console.log("FIXING: Setting correct srcObject");
         localVideoRef.current.srcObject = localStream.current;
@@ -1565,7 +1732,7 @@ const VideoPlayer = ({
                     </div>
 
                     <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 px-2 py-1 rounded text-white text-xs z-40">
-                      {user?.user_metadata.name ?? `You`}
+                      {user?.user_metadata?.full_name ?? `You`}
                     </div>
 
                     {raisedUsers.includes(user?.id) && (
@@ -1578,7 +1745,7 @@ const VideoPlayer = ({
                     )}
                   </div>
 
-                  
+
                   {agent &&
                     <div
                       className="relative aspect-video flex flex-col items-center justify-center p-2 bg-gradient-to-b from-green-500 to-green-800 rounded-xl"
@@ -1708,7 +1875,7 @@ const VideoPlayer = ({
                         </div>
                       )}
 
-                  
+
                       {peer.micEnabled === false &&
                       {
                         /*!peer.isAgent */
@@ -1824,7 +1991,7 @@ const VideoPlayer = ({
                   <div
                     className={`  text-sm  aspect-video bg-black bg-opacity-50  h-28 px-2 py-1 rounded text-white`}
                   >
-                    {user?.user_metadata.name ?? `You`}
+                    {user?.user_metadata?.full_name ?? `You`}
                   </div>
                 )}
 
@@ -1834,7 +2001,7 @@ const VideoPlayer = ({
                     : "bottom-1 left-1 text-xs"
                     } bg-black bg-opacity-50 px-2 py-1 rounded text-white z-40`}
                 >
-                  {user?.user_metadata.name ?? `You`}
+                  {user?.user_metadata?.full_name ?? `You`}
                 </div>
 
                 {raisedUsers.includes(user?.id) && (
@@ -1947,7 +2114,7 @@ const VideoPlayer = ({
                   </div>
                 ))}
 
-            
+
               {/* Remote Peers */}
               {remotePeers.map((peer) => (
                 <div
@@ -1980,10 +2147,10 @@ const VideoPlayer = ({
                     style={{ display: "none" }}
                   />
 
-                
+
                   {peer.videoEnabled === true ? (
                     <video
-                   
+
 
                       ref={(ref) => {
                         if (ref && peer.stream) {
@@ -2106,14 +2273,13 @@ const VideoPlayer = ({
       )}
       {ephemeralKey && (
         <OpenAISharedSession
-          ephemeralKey={ephemeralKey}
+          // ephemeralKey={ephemeralKey}
           jointPeers={jointPeers}
           isMeetingHost={agent}
           localTranscript={localTranscript}
           remoteTranscript={remoteTranscript}
           meetingId={id} // Add this
           socket={socket}
-          peerConnections={peerConnections}
         />
       )}
 

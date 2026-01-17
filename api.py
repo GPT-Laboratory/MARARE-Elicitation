@@ -28,6 +28,9 @@ from pathlib import Path
 
 # MCP imports
 from fastmcp import FastMCP, Client
+# from python_files.mcp_server import GLOBAL_CONFIG, async_list_tools, call_tool_func, run_mcp_server
+# from slack_sdk import WebClient
+# from slack_sdk.errors import SlackApiError
 
 from python_files.langraph_agents_for_bussiness_meeting import  STORAGE_LOCK, get_or_create_meeting_storage, graph, reset_meeting_storage
 
@@ -35,11 +38,20 @@ from python_files.langraph_agents_for_bussiness_meeting import  STORAGE_LOCK, ge
 from gtts import gTTS
 import requests
 from pymongo import MongoClient
+# from python_files.final_report import createDOCXReport, get_all_reports_by_user_id, get_meeting_reports, get_report
+# from python_files.final_table_prioritization import get_final_prioritization, get_final_table_prioritization
+# from python_files.mcp_functions import run_async
+# from python_files.mcp_openai_format import MCPAgent
 from python_files.meeting_files.generate_stories_functions import generate_user_stories
+# from python_files.personas import add_persona, delete_persona, get_personas, personas_list, update_persona
+# from python_files.mcp_agent import IntelligentMCPAgent
 from python_files.meeting_files import create_project
 from python_files.meeting_files.end_call import leave_call
 from python_files.meeting_files.create_project import delete_project, delete_user_story, delete_user_story_version, fetch_projects, get_all_user_stories, creating_project, get_user_stories_by_project, update_project, update_story
+# from python_files.prioritization import  handle_final_prioritization_workflow_sync, run_agents_workflow_sync
+# from python_files.rag_processing import  format_project_data, generate_unique_filename, process_project_files, validate_file_upload
 from python_files.turn_stun_servers import webrtc_config_view
+# from python_files.upgrade_user_story import upgrade_story
 
 # Load environment variables
 load_dotenv()
@@ -82,6 +94,9 @@ JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
 print("notin key in api ", NOTION_API_KEY)
+# AUTH_TOKENS = {
+#     "notion": NOTION_API_KEY,
+# }
 
 
 # OpenAI API key
@@ -111,6 +126,8 @@ def serve_react_app(path):
         # fallback for React Router
         return send_from_directory(DIST_DIR, 'index.html')
 
+# app = Flask(__name__, static_folder='dist', static_url_path='')
+# app = Flask(__name__)
 CORS(app)
 
 
@@ -120,8 +137,13 @@ mimetypes.add_type('application/javascript', '.js')
 from python_files.socketio_instance import socketio
 
 
+
+# socketio = socketio(app, async_mode='threading', cors_allowed_origins='*')
+
 socketio.init_app(app, async_mode='threading', cors_allowed_origins='*')
 
+
+# print("Using async_mode:", socketio.async_mode)
 
 # Store rooms data - this will be our source of truth for room membership
 rooms = {}
@@ -134,9 +156,21 @@ active_connections = set()
 raised_users_by_room = {}
 users={}
 
+# Store active agent offers per meeting
+active_agents = {}  # { meeting_id: { "offer": offer_sdp, "agentId": "openai-agent" } }
+
 
 # OpenAI API key from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Function to try import RAG process if available
+# try:
+#     import rag_process
+# except ImportError:
+#     rag_process = None
+#     print("RAG process module not found, skipping import")
+
+# Serve static files
 
 @app.route('/api1/ephemeral-key', methods=['POST'])
 def get_ephemeral_key():
@@ -146,8 +180,9 @@ def get_ephemeral_key():
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "gpt-4o-realtime-preview-2024-12-17",
-        "voice": "alloy"
+        "model": "gpt-realtime-2025-08-28",
+        "voice": "echo"
+        # "voice": "ash"
     }
 
     response = requests.post(url, headers=headers, json=payload)
@@ -161,6 +196,24 @@ def get_ephemeral_key():
 def serve_meeting_page_with_meeting(project_id, meeting_id):
     return send_from_directory(app.static_folder, 'index.html')
 
+# @app.route('/', defaults={'path': ''})
+# @app.route('/<path:path>')
+# def serve(path):
+#     if path and os.path.exists(os.path.join(app.static_folder, path)):
+#         return send_from_directory(app.static_folder, path)
+#     else:
+#         return send_from_directory(app.static_folder, 'index.html')
+
+
+
+# Debug helper to print room state
+# def print_room_state():
+#     print("\n=== CURRENT ROOM STATE ===")
+#     for room_id, users in rooms.items():
+#         print(f"Room {room_id}: {len(users)} users")
+#         for i, user in enumerate(users):
+#             # print(f"  User {i+1}: {user['userId']} (active: {user['userId'] in active_connections})")
+#     print("==========================\n")
 
 # Socket.IO event handlers
 @socketio.on('connect')
@@ -195,6 +248,9 @@ def handle_join_room(data):
         print("Error: No meetingId provided")
         return
     
+        
+    
+    
     # Initialize room if it doesn't exist
     if meeting_id not in rooms:
         rooms[meeting_id] = []
@@ -222,7 +278,12 @@ def handle_join_room(data):
         
     print(f"Room Admin for room {meeting_id}: {room_admins[meeting_id]}")
 
-   
+    # if len(rooms[meeting_id]) == 0:
+    #     # If the room is empty, set the user as the admin
+    #     room_admins[meeting_id] = request.sid
+    #     print(f"User {request.sid} is the admin of room {meeting_id}")
+    #     emit('admin-status', {'isAdmin': True}, to=user_id)
+
 
     # Add user to the room with Socket.IO room
     join_room(meeting_id)
@@ -239,10 +300,25 @@ def handle_join_room(data):
             user_exists = True
             break
 
+    # Add this check for OpenAI agent
+    # is_openai_agent = data.get('isOpenAIAgent', False)
+    # openai_session_id = data.get('openaiSessionId', None)
     
     # If user doesn't exist in the room, add them
     if not user_exists:
-       
+        # if is_openai_agent:
+        #     rooms[meeting_id].append({
+        #          'userId': request.sid,
+        #         'micEnabled': mic_enabled,
+        #         'isAgent': agent,
+        #         'agentName': agent_name,
+        #         'remoteName': remote_name,
+        #         'videoEnabled': video_enabled,
+        #         'isOpenAIAgent': is_openai_agent,  # Add this flag
+        #         'openaiSessionId': openai_session_id,  # Link to OpenAI session
+        #     })
+        #     print(f"OpenAI Agent {request.sid} added to room {meeting_id}")
+        # else:
             rooms[meeting_id].append({
                 'userId': request.sid,
                 'micEnabled': mic_enabled,
@@ -389,6 +465,18 @@ def handle_active_agent(data):
         }, to=meeting_id,  skip_sid=request.sid)
 
 
+@socketio.on('openai-agent-ready')
+def handle_agent_ready(data):
+    meeting_id = data.get('meetingId')
+    ready = data.get('ready')
+   
+    if meeting_id in rooms:
+        print(f'openai-agent-ready in backend {ready}')
+        emit('openai-agent-ready', {
+            'ready': ready,
+        }, to=meeting_id, skip_sid=request.sid)
+
+
 
 
 
@@ -433,6 +521,70 @@ def handle_request_to_join(data):
         'userData': pending_join_requests[meeting_id][user_id],
         'meetingId': meeting_id
     }, to=admin_id)
+
+
+
+
+# --- Agent sends Offer ---
+# --- Agent sends Offer ---
+@socketio.on('agent-peer-offer')
+def handle_agent_offer(data):
+    meeting_id = data.get('meetingId')
+    agent_id = data.get('fromUserId')
+    offer = data.get('offer')
+    to_user_id = data.get('toUserId')
+    
+    if meeting_id not in active_agents:
+        active_agents[meeting_id] = {}
+    active_agents[meeting_id]["agentId"] = agent_id
+    print(f"🤖 Received agent offer for meeting {meeting_id} (target: {to_user_id})")
+    
+    payload = {
+        'offer': offer,
+        'fromUserId': agent_id,
+        'remoteName': data.get('remoteName', 'AI Assistant'),
+        'is_openai_agent': data.get('is_openai_agent', True)
+    }
+    
+    if to_user_id:
+        emit('agent-offer', payload, to=to_user_id)
+    else:
+        emit('agent-offer', payload, to=meeting_id, include_self=False)
+    
+    print(f"📤 Broadcasted agent offer to meeting {meeting_id}")
+
+# --- Peer sends Answer back to Agent ---
+@socketio.on('peer-agent-answer')
+def handle_peer_answer(data):
+    meeting_id = data.get('meetingId')
+    print(f"📥 Peer sent answer for meeting {meeting_id}")
+    emit('agent-peer-answer', data, to=meeting_id)
+
+# --- Agent ICE → Peers ---
+@socketio.on('agent-ice')
+def handle_agent_ice(data):
+    meeting_id = data.get('meetingId')
+    to_user_id = data.get('toUserId')
+    data['fromUserId'] = data.get('fromUserId') or request.sid
+    print(f"🧊 Forwarding agent ICE to meeting {meeting_id} target={to_user_id}")  # Add this log
+    if to_user_id:
+        emit('agent-ice-candidate', data, to=to_user_id)
+    else:
+        emit('agent-ice-candidate', data, to=meeting_id, include_self=False)
+
+# --- Peer ICE → Agent ---
+@socketio.on('peer-agent-ice')
+def handle_peer_ice(data):
+    meeting_id = data.get('meetingId')
+    data['fromUserId'] = request.sid
+    target_agent = data.get('toUserId') or active_agents.get(meeting_id, {}).get("agentId")
+    print(f"📤 Forwarding peer ICE to agent in {meeting_id} target={target_agent}")  # Add this log
+    if target_agent:
+        emit('peer-agent-ice', data, to=target_agent)
+    else:
+        emit('peer-agent-ice', data, to=meeting_id)
+
+
 
 
 @socketio.on('captions-toggled')
@@ -880,6 +1032,84 @@ def handle_broadcast_transcripts(data):
 
 meeting_results = {}
 
+# Add this to your socket handlers file
+
+# @socketio.on('transcripts')
+# def get_local_transcript(data):
+#     meeting_id = str(data.get("meetingId"))
+#     transcripts = data.get("transcripts")
+#     team_config = data.get("teamConfig", {})  # Get team configuration
+    
+#     print(f"📥 Received NEW transcript chunks for meeting {meeting_id}")
+#     print(f"📝 Transcript content: {transcripts}")
+#     print(f"⚙️ Team configuration: {team_config}")
+    
+#     # Show current storage state
+#     with STORAGE_LOCK:
+#         for team_key, data in TEAMS_STORAGE.items():
+#             transcript_count = len(data['all_transcripts'])
+#             mvp_length = len(data['mvp'])
+#             vision_length = len(data['vision'])
+#             print(f"📊 {team_key}: {transcript_count} transcripts, MVP: {mvp_length} chars, Vision: {vision_length} chars")
+    
+#     state = {
+#         "transcripts": transcripts,
+#         "team_config": team_config  # Pass configuration to state
+#     }
+    
+#     print(f"🤖 Processing transcripts with enhanced memory system...")
+#     output = graph.invoke(state)
+    
+#     # Get the accumulated data from storage (which includes new + previous content)
+#     final_data = {}
+#     with STORAGE_LOCK:
+#         final_data = {
+#             "team_a_vision": TEAMS_STORAGE["team_a"]["vision"],
+#             "team_a_mvp": TEAMS_STORAGE["team_a"]["mvp"],
+#             "team_b_vision": TEAMS_STORAGE["team_b"]["vision"], 
+#             "team_b_mvp": TEAMS_STORAGE["team_b"]["mvp"],
+#             "team_c_vision": TEAMS_STORAGE["team_c"]["vision"],
+#             "team_c_mvp": TEAMS_STORAGE["team_c"]["mvp"],
+#         }
+    
+#     print("📤 Sending accumulated team data to frontend:")
+#     for key, value in final_data.items():
+#         print(f"  {key}: {len(value)} characters")
+    
+#     emit("agent_updates", final_data)
+
+
+# # Optional: Add endpoint to reset storage for new meetings
+# @socketio.on('reset_meeting')
+# def reset_meeting_data(data):
+#     meeting_id = str(data.get("meetingId"))
+#     print(f"🔄 Resetting data for meeting {meeting_id}")
+#     reset_teams_storage()
+#     emit("meeting_reset", {"status": "success", "meeting_id": meeting_id})
+
+# # Optional: Add endpoint to get current storage state
+# @socketio.on('get_current_state')
+# def get_current_state(data):
+#     meeting_id = str(data.get("meetingId"))
+#     with STORAGE_LOCK:
+#         current_state = {
+#             "meeting_id": meeting_id,
+#             "teams": {}
+#         }
+#         for team_key, team_data in TEAMS_STORAGE.items():
+#             current_state["teams"][team_key] = {
+#                 "mvp": team_data["mvp"],
+#                 "vision": team_data["vision"],
+#                 "transcript_count": len(team_data["all_transcripts"]),
+#                 "processing_rounds": len(team_data["processing_history"])
+#             }
+    
+#     emit("current_state", current_state)
+
+
+
+
+
 
 
 # ---------------- Updated Socket Handlers ----------------
@@ -1056,7 +1286,13 @@ def handle_agent_state_change(data):
         if not user_in_meeting:
             emit('error', {'message': 'User not in meeting'}, to=user_id)
             return
-      
+        
+        # Optional: Only allow admin to change agent state
+        # Uncomment below if you want only admin control
+        # admin_id = room_admins.get(meeting_id)
+        # if user_id != admin_id:
+        #     emit('error', {'message': 'Only admin can change agent state'}, to=user_id)
+        #     return
         
         # Store the agent state for this meeting (optional)
         # You might want to add a meeting_agent_states dictionary
@@ -1121,6 +1357,7 @@ app.add_url_rule('/update-project/<project_id>', view_func=update_project, metho
 
 app.add_url_rule('/generate-user-stories', view_func=generate_user_stories, methods=['POST'])
 
+
 app.add_url_rule('/update_story', view_func=update_story, methods=['PUT'])
 app.add_url_rule('/delete-user-story/<story_id>', view_func=delete_user_story, methods=['DELETE'])
 app.add_url_rule('/delete-user-story-version/<story_id>', view_func=delete_user_story_version, methods=['DELETE'])
@@ -1131,10 +1368,12 @@ app.add_url_rule('/evaluate_teams_with_formulas', view_func=evaluate_teams_view_
 
 app.add_url_rule('/score_artifacts', view_func=score_artifacts_view, methods=['POST'])
 
+# app.add_url_rule('/webrtc/config', view_func=webrtc_config_view, methods=['GET'])
 
 
 
 websocket_connections = {}
+
 
 
 
@@ -1147,6 +1386,16 @@ ALLOWED_EXTENSIONS = {'pdf'}
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+
+# import asyncio
+# from mcp_openai_format import MCPAgent
+
+
+
+
+
+
+mcp_agent = None
 
 
 
@@ -1197,8 +1446,6 @@ def get_admin_by_meeting_id(meeting_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-
-
 @app.before_request
 def startup():
     """Initialize services on startup"""
@@ -1207,8 +1454,15 @@ def startup():
         print("🚀 Starting Flask application...")
         startup.initialized = True
 
-
+# if __name__ == '__main__':
+#     port = int(os.getenv('PORT', '5000'))
+#     # Using eventlet as the async server
+#     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)  # For development only
+    
 if __name__ == '__main__':
+    # Start MCP server in a separate thread
+    print("🔧 Starting MCP server on port 3030...")
+    # threading.Thread(target=run_mcp_server, daemon=True).start()
     
     # Start main Flask application
     port = int(os.getenv('PORT', '5000'))
